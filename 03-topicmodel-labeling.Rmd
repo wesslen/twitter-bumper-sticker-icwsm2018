@@ -1,0 +1,189 @@
+---
+title: "02-topicmodel-labeling"
+output: 
+  html_document:
+    toc: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse); library(quanteda); library(stm); library(ggrepel); library(ggtern)
+
+t <- read_csv("./data/timeZeroEng.csv") 
+
+replace_reg <- "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https"
+t$description <- stringr::str_replace_all(t$description, replace_reg, "")
+# load data
+load(file = "./data/out.RData")
+load(file = "./data/ctmfit.RData")
+
+z <- as.tibble(ctmFit$theta)
+userTopics <- tibble(UserTopic = apply(z,MARGIN=1,which.max),
+                     UserTopicProb = apply(z,MARGIN=1,max))
+
+z$id_str <- as.character(out$meta$id)
+t$id_str <- as.character(t$id_str)
+
+# join t and topics (z)
+t <- inner_join(t, z, by = "id_str")
+
+# join t and max topic and prob
+t <- cbind(t, userTopics)
+
+# clean out z
+z <- NULL
+```
+
+## Summary Stats
+
+This runs topic modeling on the ~680k ENGLISH only (as defined as https://github.com/ropensci/cld2) profiles at time zero (by 8am on October 1st, 2017).
+
+Note - while the model does a very good job, it's not perfect. Sometimes, it will includes some non-English if there are one or two words that are the same in English (e.g., Spanish terms with one or two similar English words).
+
+### Topic Overview
+
+This plot shows the top 10 words for each of the 49 topics.
+
+```{r echo=FALSE, fig.height=10, fig.width=8}
+plot(ctmFit, 
+         type = "summary", 
+         xlim = c(0,.08), 
+         n = 10, 
+         labeltype = "frex",
+         main = "Profile Clusters", 
+         text.cex = 0.7)
+```
+
+### Topic Quality
+
+```{r}
+label <- labelTopics(ctmFit, n = 10)
+
+prob <- as.tibble(t(label$prob))
+frex <- as.tibble(t(label$frex))
+
+prob <- as.vector(t(map_df(prob, paste0, collapse = " + ")))
+frex <- as.vector(t(map_df(frex, paste0, collapse = " + ")))
+
+# get quality metrics
+quality <- tibble(topicName = paste0("Topic ",1:49),
+                  topic = 1:49,
+                  topicProb = prob,
+                  topicFrex = frex,
+                  SemanticCoherence = semanticCoherence(ctmFit, 
+                                                documents = out$documents,
+                                                M = 30),
+                  Exclusivity = exclusivity(ctmFit, M= 30)) %>%
+  arrange(desc(SemanticCoherence))
+
+ggplot(quality, aes(x = SemanticCoherence, y = Exclusivity, label = topicName)) +
+  geom_text_repel() +
+  geom_point() +
+  labs(title = "Measures of Topic Quality: Exclusivity and Semantic Coherence")
+
+knitr::kable(quality)
+```
+
+To interpret the plot above, topics on the right to top-right are the most "interpretable".
+
+High Semantic Coherence (x axis) indicates Topics with more consistency in their top words while High Exclusivity (y axis) indicates that the words for that topic are more unique (i.e., exclusive to the topic).
+
+Overall, I'd rank Semantic Coherence to be most important. Therefore, topics like #12, #32, #38, and #21 (have the highest Semantic Coherence) are likely to be the most interpretable.
+
+Alternatively, topics like topic #4 and #49 have the lowest semantic coherence and will likely be the most difficult to interpret. This is usually because the topic is a mixture of potentially sub-topics (said differently, if we were to add one or two more topics, these would likely be the next to "separate").
+
+### Topic Stats
+
+```{r}
+topicSum <- t %>% 
+  group_by(UserTopic) %>%
+  summarise(MedianFollowers = median(followers_count),
+            MedianStatuses = median(statuses_count),
+            MedianFriends = median(friends_count),
+            Count = n()) %>%
+  merge(quality, by.x = "UserTopic", by.y = "topic") %>%
+  arrange(desc(Count)) %>%
+  mutate(followers = scale(MedianFollowers),
+         statuses = scale(MedianStatuses),
+         friends = scale(MedianFriends))
+
+# fit <- kmeans(topicSum[,6:8], 7)
+# topicSum$Cluster <- as.factor(fit$cluster)
+
+knitr::kable(topicSum[,c(1,8,2:5)])
+
+# ggtern(data=topicSum,aes(x = followers,
+#                          y = friends,
+#                          z = statuses,
+#                          label = UserTopic,
+#                          color = Cluster)) + 
+#   geom_point() +
+#   geom_text()
+```
+
+## Topics
+
+Below runs through each of the 49 topics and provides their top 30 words as well as the top 20 representative profiles.
+
+For the top 30 words, there are two plots.
+
+The first is the raw probabilities. These are the most prominent words in each topic.
+
+The second is the FREX probabilities. These are the most "interpretable" words in each topic. Think of these as the most significant and most important words in each topic. Research [(Roberts, Stewart, Airoldi, 2016)](https://scholar.princeton.edu/sites/default/files/bstewart/files/a_model_of_text_for_experimentation_in_the_social_sciences.pdf) has shown these to be more helpful than the raw probabilities. 
+
+Think of them as:
+
+Raw Probabilities : FREX Probabilities :: Raw Word Frequencies : TF-IDF
+
+```{r echo=FALSE, message=TRUE}
+# top N of representative docs
+N <- 20
+
+for(i in 1:ctmFit$settings$dim$K){
+  
+  cat(paste0("Topic ",i))
+  
+  cat("\n")
+  cat("Top 30 Words by Raw Probability")
+  
+  plot(ctmFit, # model results
+         type = "labels", # type of plot
+         labeltype= "prob", # label type for the words
+         n = 30, # number of words to show
+         topics = i, # the topic we've selected
+         text.cex = 1.2, # this increases the font by 20% (1.2 = 120%)
+         width = 50, # this increases the width of the box
+         main = "Raw Probabilities") 
+  
+  cat("Top 30 Words by FREX Probability")
+  
+  plot(ctmFit, # model results
+         type = "labels", # type of plot
+         labeltype= "frex", # label type for the words
+         n = 30, # number of words to show
+         topics = i, # the topic we've selected
+         text.cex = 1.2, # this increases the font by 20% (1.2 = 120%)
+         width = 50, # this increases the width of the box
+         main = "FREX Probabilities") 
+
+  cat("Top 20 Most Representative Profiles\n")
+  
+  z <- findThoughts(ctmFit, texts = t$description, topics = i, n = N)
+  
+  cat(paste0("Topic ",i),": Top 5 Examples")
+  plot(z, 1:5, width = 60)
+  cat(paste0("Topic ",i),": Top 6-10 Examples")
+  plot(z, 6:10, width = 60)
+  cat(paste0("Topic ",i),": Top 11-15 Examples")
+  plot(z, 11:15, width = 60)
+  cat(paste0("Topic ",i),": Top 16-20 Examples")
+  plot(z, 16:20, width = 60)
+  
+  #col <- c("description","id_str","screen_name","name","location","created_at")
+  #print(t[unlist(z$index),col])
+}
+```

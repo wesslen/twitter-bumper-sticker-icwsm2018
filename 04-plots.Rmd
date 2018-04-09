@@ -1,0 +1,230 @@
+---
+title: "Paper Charts"
+author: "Ryan Wesslen"
+date: "April 6, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+## Plot curves
+
+Get Curves.
+
+```{r get-curves}
+library(tidyverse); library(scales)
+
+getCurves <- function(fileName){
+  file <- read_csv(fileName, 
+                   col_types = cols(X1 = col_character()))
+  return(colSums(file[,2:10]) / nrow(file))
+}
+
+Name <- getCurves("data/changedNameBase0.csv")
+Summary <- getCurves("data/changedSummariesBase0.csv")
+ScreenName <- getCurves("data/changedScreenNameBase0.csv")
+Location <- getCurves("data/changedLocationBase0.csv")
+```
+
+## Plot Figure X
+
+```{r}
+df <- tibble(Time = 0:8,
+             `Display Name` = Name,
+             `Profile Summary` = Summary,
+             `Screen Name` = ScreenName,
+             Location = Location)
+
+df2 <- gather(df, `Profile Field`, ChangeRate, -Time)
+
+df2$`Profile Field` <- as.factor(df2$`Profile Field`)
+
+## ggplot
+
+ggplot(df2, aes(x = Time, y = ChangeRate, group = `Profile Field`, color = `Profile Field`)) +
+  geom_line(size = 1) + geom_point(size = 2) +
+  scale_y_continuous(labels=percent) +
+  scale_x_continuous(breaks= 0:8) +
+  labs(title = "Population Likelihood to Change from Time Zero",
+       subtitle = "Cumulative percent of users at time zero who made any change to each field.",
+       x = "Snapshot (Approximately 36 hours in between each snapshot)",
+       y = "Cumulative Change Rate") +
+  geom_text(data = df2[df2$Time == 6 & df2$`Profile Field` != "Profile Summary", ], aes(label = `Profile Field`), hjust = -0.1, vjust = 1.4, size = 4, fontface = "bold") +
+  geom_text(data = df2[df2$Time == 6 & df2$`Profile Field` == "Profile Summary", ], aes(label = `Profile Field`), hjust = 1, vjust = -.5, size = 4, fontface = "bold") +
+  theme(legend.position = "none", axis.text=element_text(size=12))
+```
+
+
+
+```{r}
+# see above
+t <- read_csv("./data/profileLevel.csv")
+t$id_str <- as.character(t$id_str)
+
+labels <- read_csv("./data/topicLabels.csv")
+labels$topicLabel <- paste0("Topic ",labels$topic,": ", labels$topicLabel)
+
+# profile
+summary <- read_csv("./data/changedSummariesBase0.csv", 
+         col_types = cols(X1 = col_character()))
+
+summary$id_str <- as.character(summary$X1)
+summary$X1 <- NULL
+
+summary0 <- inner_join(summary, t[,c("id_str","UserTopic")])
+
+# screen name
+screenName <- read_csv("./data/changedScreenNameBase0.csv", 
+                    col_types = cols(X1 = col_character()))
+
+screenName$id_str <- as.character(screenName$X1)
+screenName$X1 <- NULL
+
+screenName0 <- inner_join(screenName, t[,c("id_str","UserTopic")])
+
+# screen name
+displayName <- read_csv("./data/changedNameBase0.csv", 
+                       col_types = cols(X1 = col_character()))
+
+displayName$id_str <- as.character(displayName$X1)
+displayName$X1 <- NULL
+
+displayName0 <- inner_join(displayName, t[,c("id_str","UserTopic")])
+
+# screen name
+location <- read_csv("./data/changedLocationBase0.csv", 
+                       col_types = cols(X1 = col_character()))
+
+location$id_str <- as.character(location$X1)
+location$X1 <- NULL
+
+location0 <- inner_join(location, t[,c("id_str","UserTopic")])
+```
+
+
+### Curve Function
+
+```{r}
+groupCurve <- function(x){
+
+  pNames <- colnames(x[,1:9])
+  
+  groups <- x %>%
+    group_by(UserTopic) %>%
+    summarise(Count = n()) %>%
+    inner_join(labels, by = c("UserTopic" = "topic")) 
+  
+  y <- x %>% 
+    group_by(UserTopic) %>% 
+    summarise_at(pNames, funs(sum)) %>%
+    inner_join(groups) %>%
+    mutate_each(funs(./Count), starts_with('pass')) %>%
+    select(c(pNames, "topicLabel")) %>%
+    gather(Time, `Profile Summary Changes`, -topicLabel) %>%
+    mutate(topicLabel = as.factor(topicLabel))
+  
+  y$Time <- case_when(
+    y$Time == "pass0" ~ 0L,
+    y$Time == "pass1" ~ 1L,
+    y$Time == "pass2" ~ 2L,
+    y$Time == "pass3" ~ 3L,
+    y$Time == "pass4" ~ 4L,
+    y$Time == "pass5" ~ 5L,
+    y$Time == "pass6" ~ 6L,
+    y$Time == "pass7" ~ 7L,
+    y$Time == "pass8" ~ 8L
+  )
+  
+  return(y)
+}
+
+```
+
+
+```{r}
+summary0Group <- groupCurve(summary0)
+screenGroup <- groupCurve(screenName0)
+locationGroup <- groupCurve(location0)
+displayGroup <- groupCurve(displayName0)
+
+df <- tibble(topicLabel = summary0Group$topicLabel,
+       Time = summary0Group$Time,
+       `Profile Summary` = summary0Group$`Profile Summary Changes`,
+       `Location` = locationGroup$`Profile Summary Changes`,
+       `Screen Name` = screenGroup$`Profile Summary Changes`,
+       `Display Name` = displayGroup$`Profile Summary Changes`)
+
+df3 <- df %>% gather(`Profile Field`, ChangeRate, c(-Time, -topicLabel))
+
+df3$`Profile Field` <- as.factor(df3$`Profile Field`)
+
+## ggplot by facet
+
+ggplot(df3, aes(x = Time, y = ChangeRate, group = topicLabel, color = topicLabel)) +
+  geom_line(size = 0.75) + 
+  scale_y_continuous(labels=percent) +
+  scale_x_continuous(breaks= 0:8) +
+  labs(title = "Population Likelihood to Change Profile from Time Zero",
+       subtitle = "Cumulative percent of users at time zero who made any change to each field.",
+       x = "Snapshot (Approximately 36 hours in between each snapshot)",
+       y = "Cumulative Change Rate") +
+  theme(legend.position = "none", axis.text=element_text(size=10)) +
+  facet_wrap(~ `Profile Field`)
+```
+## Cumulative Box Plots: Figure X
+
+```{r fig.width = 4, fig.height=5}
+df4 <- filter(df3, Time == 8) %>%
+  select(c("topicLabel", "Profile Field", "ChangeRate"))
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+cols = gg_color_hue(4)
+
+library(forcats); library(ggrepel)
+
+# modify for labels
+
+df4$`Profile Field` <- recode(df4$`Profile Field`, "Profile Summary" = "Profile\nSummary")
+
+df4$topicLabel <- gsub("&", "\n&", df4$topicLabel)
+df4$topicLabel[df4$topicLabel == "Topic 16: Gender Identity"] <- "Topic 16: Gender\nIdentity" 
+df4$topicLabel[df4$topicLabel == "Topic 21: Company Profile"] <- "Topic 21: Company\nProfile" 
+
+# plot
+ggplot(df4, aes(x = fct_reorder(`Profile Field`, ChangeRate), y = ChangeRate, fill = `Profile Field`)) +
+  geom_boxplot(coef=0, outlier.size = 0, alpha = 0.6) +
+  labs(x = "Profile Field",
+       y = "Two Week Change Rate per Group (Topic)") +
+  theme(legend.position= "none") +
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.6, binwidth = 0.005) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Display Name" & (ChangeRate > 0.225 )) | 
+                                (`Profile Field` == "Profile\nSummary" & (ChangeRate > 0.26 ))), aes(label=topicLabel), size = 2, box.padding = 0.6) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Display Name" & (topicLabel == "Topic 1: Pop Music"))), aes(label=topicLabel), size = 2, box.padding = 0.4, nudge_x = -0.3) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Display Name" & (ChangeRate < 0.05) & topicLabel != "Topic 38: Media")),  aes(label=topicLabel), 
+                  size = 2, box.padding = 0.2, nudge_x = .5, nudge_y = -0.01) +
+    geom_text_repel(data=filter(df4, (`Profile Field` == "Display Name" & topicLabel == "Topic 38: Media")),  aes(label=topicLabel), 
+                  size = 2, box.padding = 0.2, nudge_x = -.3, nudge_y = -0.02) +
+  
+  ## profile summary
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Profile\nSummary" & (ChangeRate < 0.1)  & topicLabel == "Topic 38: Media")), aes(label=topicLabel), 
+                  size = 2, box.padding = 0.5, nudge_y = -0.002, nudge_x = 0.2) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Profile\nSummary" & topicLabel == "Topic 39: Landmarks \n& Tourism")), aes(label=topicLabel), 
+                  size = 2, box.padding = 0.2, nudge_y = 0.02, nudge_x = 0.05) +
+    geom_text_repel(data=filter(df4, (`Profile Field` == "Profile\nSummary" & topicLabel == "Topic 21: Company\nProfile")), aes(label=topicLabel), 
+                  size = 2, box.padding = 0.2, nudge_y = 0.00, nudge_x = -0.05) +
+  ## location
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Location" & (ChangeRate > 0.1))), aes(label=topicLabel), 
+                  size = 2, nudge_y = 0.02, nudge_x = -0.5) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Screen Name" & topicLabel == "Topic 42: Voice \n& Names")), aes(label=topicLabel), 
+                  size = 2, box.padding = 0.1, nudge_y = 0.01, nudge_x = 0.25) +
+  geom_text_repel(data=filter(df4, (`Profile Field` == "Screen Name" & topicLabel == "Topic 35: K-Pop")), aes(label=topicLabel), 
+                  size = 2, box.padding = 0.1, nudge_y = -0.001, nudge_x = -.3) +
+  scale_y_continuous(labels = scales::percent)
+```
+

@@ -1,3 +1,12 @@
+# old
+/old/*.csv
+/old/*.R
+/old/*.Rmd
+
+# Data
+/data/*.RData
+/data/*.csv
+
 # History files
 .Rhistory
 .Rapp.history

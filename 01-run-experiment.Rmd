@@ -1,0 +1,87 @@
+---
+title: "01-run-experiment"
+author: "Ryan Wesslen"
+date: "April 3, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## Run Bumper Sticker Experiment
+
+First, get the two R packages: `tweetscores` and `twitteR`. You will need `devtools` to install `tweetscores`.
+
+```{r eval=FALSE}
+devtools::install_github("pablobarbera/twitter_ideology/pkg/tweetscores")
+install.packages("twitterR")
+
+library(tweetscores); library(twitteR)
+```
+
+### Use one day full sample
+
+For our experiment, we used one full day 1% streaming data for Sept 28, 2017 -- 2.58MM unique users for 3,423,287 tweets
+
+For an example of how to pull 1% streaming using streamR package, see [Social Media Workshop](https://github.com/wesslen/summer2017-socialmedia/blob/master/day1/twitter-streaming.Rmd).
+
+The id file only needs to include the user profile (actor.id) of the users you want to ping.
+
+```{r eval=FALSE}
+# dataset not provided
+id <- readr::read_csv("./data/userid20170928.csv")
+id$ids <- as.character(id$ids)
+```
+
+Next, point to your credentials file (for info to set up, see README of <https://github.com/pablobarbera/twitter_ideology>)
+
+```{r eval=FALSE}
+credentials <- "~/TwitterSample/credentials/"
+```
+
+### Running the experiment
+
+First, let's initialize our dataframe.
+
+```{r eval=FALSE}
+#initialize columns/formats
+df <- getUsersBatch(ids=id$ids[1], # choose first one to initialize the dataset
+              oauth_folder= credentials,
+              include_entities = TRUE)
+
+#initialize a timestamp to show when the pass completed
+df$timestamp <- Sys.time()
+
+# remove all entries to initialize (empty dataframe with correct column formatting)
+df <- df[0,]
+```
+
+Next, set up the parameters for the experiment.
+
+```{r eval=FALSE}
+# set stop time for the experiment
+stopTime <- "2017-10-14 00:00:00 EDT"
+
+# file name to save results
+fileName <- "./data/experiment.csv"
+
+# while loop to rerun after each pass
+while(Sys.time() < stopTime){
+  userdata <- getUsersBatch(ids = id$ids,
+                            oauth_folder = credentials,
+                            include_entities = TRUE)
+  userdata$timestamp <- Sys.time() # mark after the users batch completes
+  df <- rbind(df, userdata)        # append the new pass with the previous passes
+  write_csv(df, fileName) # save the file as a CSV
+}
+```
+
+
+## Future Work
+
+Moving forward, there are two ways to improve upon this code.
+
+First, noSQL databases would be better way to store the data (e.g., MongoDB) than flat (json or CSV) files.
+
+Second, `twitteR` package is deprecated. `rtweet` by Mike Kearney (see [link](http://rtweet.info/)) is a better long-term Twitter API package in R. A better solution would be to migrate to `rtweet`. The problem is the `tweetscores` packages uses `twitteR` so reconciliation would be needed before migrating to `rtweet`.

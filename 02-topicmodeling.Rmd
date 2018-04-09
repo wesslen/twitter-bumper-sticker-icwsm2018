@@ -1,0 +1,145 @@
+---
+title: "Bumper Sticker TM"
+author: "Ryan Wesslen"
+date: "December 16, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Pull the tweets and keep only the English tweets.
+
+```{r data}
+library(tidyverse)
+t <- read_csv("./data/timeZero.csv") %>% 
+  filter(desc_lang == "ENGLISH")
+
+library(quanteda)
+
+replace_reg <- "https://t.co/[A-Za-z\\d]+|http://[A-Za-z\\d]+|&amp;|&lt;|&gt;|RT|https"
+t$description <- stringr::str_replace_all(t$description, replace_reg, "")
+```
+
+## Preprocessing
+
+```{r}
+myCorpus <- corpus(t$description)
+docvars(myCorpus, field = "id") <- as.character(t$id_str)
+
+stopWords <- c()
+
+dfm <- dfm(myCorpus,
+           remove = c(stopwords("english"), stopWords),
+           ngrams= 1L,
+           stem = F,
+           remove_numbers = TRUE, 
+           remove_punct = TRUE,
+           remove_symbols = TRUE)
+
+vdfm <- dfm_trim(dfm, min_count = 10, min_docfreq = 5)
+```
+
+## Exploratory
+
+```{r warning=FALSE}
+topfeatures(vdfm, n = 50)
+
+textplot_wordcloud(vdfm,  scale=c(3.5, .75), colors=RColorBrewer::brewer.pal(8, "Dark2"), 
+     random.order = F, rot.per=0.1, max.words=250, main = "Raw Counts")
+```
+
+## Topic Modeling
+
+```{r warning=FALSE}
+library(stm)
+```
+
+```{r eval=FALSE}
+# use quanteda converter to convert our Dfm
+stmdfm <- convert(dfm, to = "stm")
+out <- prepDocuments(stmdfm$documents, stmdfm$vocab, stmdfm$meta, lower.thresh = 10)
+save(out, file = "./data/out.RData")
+```
+
+```{r eval=FALSE}
+ctmFit <- stm(out$documents, out$vocab, K = 0,
+              max.em.its = 150, data = out$meta, init.type = "Spectral", seed = 300)
+
+save(ctmFit, file = "./ctmfit.RData")
+```
+
+```{r}
+load(file = "./data/out.RData")
+load(file = "./data/ctmfit.RData")
+```
+
+```{r fig.height=6, fig.width=6}
+z <- ctmFit$theta
+topics <- apply(t(z),MARGIN=2,which.max)
+
+# means <- tibble(topic = as.factor(1:49),
+#                 topProp = colMeans(ctmFit$theta))
+# 
+# library(forcats)
+# ggplot(means, aes(x = fct_reorder(topic, topProp), 
+#                   y = topProp)) +
+#   geom_col() +
+#   coord_flip() +
+#   labs(x = "Topic") +
+#   ylim(0, 0.1)
+
+plot(ctmFit, 
+         type = "summary", 
+         xlim = c(0,.08), 
+         ylim = c(0.4, 49.4),
+         n = 5, 
+         labeltype = "frex",
+         main = " ", 
+         text.cex = 0.5)
+```
+
+### Exploratory Analysis
+
+```{r}
+topic <- tibble(id_str = out$meta$id, topic = topics)
+
+labs <- labelTopics(ctmFit)
+df_frex <- as.tibble(labs$frex)
+
+t$id_str <- as.character(t$id_str)
+
+t <- merge(t, topic, by = "id_str")
+
+t$year <- as.integer(substring(t$created_at,27,30))
+```
+
+```{r}
+topicSum <- t %>% 
+  group_by(topic) %>%
+  summarise(MedianFollower = median(followers_count),
+            MedianStatuses = median(statuses_count),
+            MedianFriends = median(friends_count),
+            MeanYear = mean(year),
+            Count = n()) %>%
+  ungroup() %>%
+  gather(key = "Metric", value = "Value", -topic)
+
+ggplot(topicSum, aes(x = Metric, y = Value, color = Metric)) + 
+  geom_boxplot() +
+  facet_grid(.~Metric, scale = "free_y")
+```
+
+
+```{r}
+t %>% 
+  #count(topic, year) %>%
+  mutate(topic = as.factor(topic)) %>%
+  filter(topic %in% c(3,6,42,38)) %>%
+  ggplot(aes(x = year)) + geom_density(aes(fill = topic), adjust = 2, alpha = 0.2) + 
+  #facet_wrap(~topic) +
+  theme(legend.position = "right")
+```
